@@ -1,9 +1,13 @@
 library(timetk)
 library(tidyverse)
+library(tidymodels)
 library(patchwork)
+library(vroom)
 
 store_train <- read.csv("~/Desktop/StoreItem/train.csv")
 store_test <- read.csv("~/Desktop/StoreItem/test.csv")
+store_train <- vroom("./train.csv")
+store_test <- vroom("./test.csv")
 
 
 s1 <- store_train %>% 
@@ -44,3 +48,48 @@ for(s in 1:nStores){
     }
   }
 }
+
+store_item <- store_train %>%
+  filter(store == 4, item == 45)
+
+my_recipe <- recipe(sales ~. , data = store_item) %>%
+  step_date(date, features = "dow") %>%
+  step_date(date, features = "month") %>%
+  step_naomit()
+
+prep <- prep(my_recipe)
+baked <- bake(prep, new_data = store_item)
+
+rf_mod <- rand_forest(mtry = tune(),
+                      min_n = tune(),
+                      trees = 500) %>%
+  set_engine("ranger") %>%
+  set_mode("regression")
+
+
+rf_wf <- workflow() %>%
+  add_recipe(my_recipe) %>%
+  add_model(rf_mod)
+
+tuning_grid <- grid_regular(mtry(range=c(1,ncol(store_item)-1)),
+                            min_n(),
+                            levels = 5)
+
+folds <- vfold_cv(store_item, v = 10, repeats = 1)
+
+CV_results <- rf_wf %>%
+  tune_grid(resamples = folds,
+            grid = tuning_grid,
+            metrics = metric_set(smape))
+
+select_best(CV_results)
+
+bestTune <- CV_results %>%
+  select_best("smape")
+
+collect_metrics(CV_results)
+  
+
+
+
+
