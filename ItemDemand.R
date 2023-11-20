@@ -3,9 +3,8 @@ library(tidyverse)
 library(tidymodels)
 library(patchwork)
 library(vroom)
+library(modeltime)
 
-store_train <- read.csv("~/Desktop/StoreItem/train.csv")
-store_test <- read.csv("~/Desktop/StoreItem/test.csv")
 store_train <- vroom("./train.csv")
 store_test <- vroom("./test.csv")
 
@@ -54,8 +53,7 @@ store_item <- store_train %>%
 
 my_recipe <- recipe(sales ~. , data = store_item) %>%
   step_date(date, features = "dow") %>%
-  step_date(date, features = "month") %>%
-  step_naomit()
+  step_date(date, features = "month")
 
 prep <- prep(my_recipe)
 baked <- bake(prep, new_data = store_item)
@@ -88,8 +86,106 @@ bestTune <- CV_results %>%
   select_best("smape")
 
 collect_metrics(CV_results)
-  
 
+# EXPONENTIAL SMOOTHING
+# STORE_ITEM1
+store_item1 <- store_train %>%
+  filter(store == 9, item == 33)
+store_item2 <- store_train %>%
+  filter(store == 8, item == 22)
+
+split <- time_series_split(store_item1, assess="3 months", cumulative = TRUE)
+split %>%
+tk_time_series_cv_plan() %>% #Put into a data frame
+  plot_time_series_cv_plan(date, sales, .interactive=FALSE)
+
+
+es_model <- exp_smoothing() %>%
+  set_engine("ets") %>%
+  fit(sales~date, data=training(split))
+
+## Cross-validate to tune model
+cv_results <- modeltime_calibrate(es_model,
+                                  new_data = testing(split))
+
+## Visualize CV results
+plot1 <- cv_results %>%
+modeltime_forecast(
+                   new_data = testing(split),
+                   actual_data = store_item1
+) %>%
+plot_modeltime_forecast(.interactive=TRUE)
+
+## Evaluate the accuracy
+cv_results %>%
+modeltime_accuracy() %>%
+table_modeltime_accuracy(
+                         .interactive = FALSE
+)
+
+
+## Refit to all data then forecast
+es_fullfit <- cv_results %>%
+modeltime_refit(data = store_item1)
+
+es_preds <- es_fullfit %>%
+modeltime_forecast(h = "3 months") %>%
+rename(date=.index, sales=.value) %>%
+select(date, sales) %>%
+full_join(., y=store_test, by="date") %>%
+select(id, sales)
+
+plot2 <- es_fullfit %>%
+modeltime_forecast(h = "3 months", actual_data = store_item1) %>%
+plot_modeltime_forecast(.interactive=FALSE)
+
+# STORE_ITEM2
+split <- time_series_split(store_item2, assess="3 months", cumulative = TRUE)
+split %>%
+  tk_time_series_cv_plan() %>% #Put into a data frame
+  plot_time_series_cv_plan(date, sales, .interactive=FALSE)
+
+
+es_model <- exp_smoothing() %>%
+  set_engine("ets") %>%
+  fit(sales~date, data=training(split))
+
+## Cross-validate to tune model
+cv_results <- modeltime_calibrate(es_model,
+                                  new_data = testing(split))
+
+## Visualize CV results
+plot3 <- cv_results %>%
+  modeltime_forecast(
+    new_data = testing(split),
+    actual_data = store_item2
+  ) %>%
+  plot_modeltime_forecast(.interactive=TRUE)
+
+## Evaluate the accuracy
+cv_results %>%
+  modeltime_accuracy() %>%
+  table_modeltime_accuracy(
+    .interactive = FALSE
+  )
+
+
+## Refit to all data then forecast
+es_fullfit <- cv_results %>%
+  modeltime_refit(data = store_item2)
+
+es_preds <- es_fullfit %>%
+  modeltime_forecast(h = "3 months") %>%
+  rename(date=.index, sales=.value) %>%
+  select(date, sales) %>%
+  full_join(., y=store_test, by="date") %>%
+  select(id, sales)
+
+plot4 <- es_fullfit %>%
+  modeltime_forecast(h = "3 months", actual_data = store_item2) %>%
+  plot_modeltime_forecast(.interactive=FALSE)
+
+plotly::subplot(plot1, plot2, plot3, plot4, nrows = 2)
 
 
 
